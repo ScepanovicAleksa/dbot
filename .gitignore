@@ -1,0 +1,10 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Local runtime data
+recent_posts.json
+message_counts.json
+
+# Secrets
+.env
