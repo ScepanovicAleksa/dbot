@@ -66,43 +66,64 @@ python bot.py
    - `DISCORD_GUILD_NAME`
    - `DISCORD_CHANNEL_NAME`
 
-## Test Checklist
-1. Start bot and confirm startup message appears.
-2. In target channel run `!postnow`.
-3. Confirm embed appears with `Open on X` link and that link opens correct tweet.
-4. Check `recent_posts.json` is created and updated.
-5. Repeat `!postnow` several times and verify no repeat inside last 7 IDs.
+## Deploy on DigitalOcean (Recommended)
 
-## Deploy on Oracle Cloud VM (Recommended: Ubuntu)
+For this bot, the simplest stable approach is:
+- 1 small Droplet (`$4/mo` plan)
+- run with `systemd`
+- no Docker required
 
-### 1. Prepare VM
+### Why DigitalOcean for this bot
+- Predictable pricing with monthly cap per Droplet.
+- Free always-on DDoS protection (network/transport layers).
+- Free cloud firewalls.
+- Easy VPS workflow.
+
+### 1. Create Droplet
+1. Create a Ubuntu 24.04 Droplet (`Basic`, smallest plan is enough).
+2. Add your SSH key while creating.
+3. Region: choose nearest to your audience.
+4. Optional but recommended: rename Droplet to `dbot-prod`.
+
+### 2. Basic security setup
+1. In DigitalOcean Cloud Firewall:
+   - allow inbound `22/tcp` only from your IP.
+   - deny everything else inbound.
+2. Outbound can stay open (bot needs outbound HTTPS to Discord/X links only for message content).
+3. In Billing settings, enable **Billing Alert** (for example `$6` or `$8`).
+
+Note: Billing Alert is an alert, not a hard spending cap.
+
+### 3. SSH and install runtime
 ```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y python3 python3-venv python3-pip git
+ssh root@<DROPLET_IP>
+apt update && apt upgrade -y
+apt install -y git python3 python3-venv python3-pip
 ```
 
-### 2. Upload/clone project
+### 4. Clone project and install dependencies
 ```bash
 git clone <your-repo-url>
 cd dbot
-```
-
-### 3. Install bot
-```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 4. Configure environment
-Create `.env` in project root:
+### 5. Configure environment
 ```bash
+cp .env.example .env
+nano .env
+```
+
+Set:
+```env
 DISCORD_TOKEN=YOUR_TOKEN
 DISCORD_GUILD_NAME=asetianism
 DISCORD_CHANNEL_NAME=asetianism
 ```
 
-### 5. Run as systemd service
+### 6. Run as systemd service
 Create `/etc/systemd/system/dbot.service`:
 
 ```ini
@@ -112,10 +133,10 @@ After=network.target
 
 [Service]
 Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu/dbot
-EnvironmentFile=/home/ubuntu/dbot/.env
-ExecStart=/home/ubuntu/dbot/.venv/bin/python /home/ubuntu/dbot/bot.py
+User=root
+WorkingDirectory=/root/dbot
+EnvironmentFile=/root/dbot/.env
+ExecStart=/root/dbot/.venv/bin/python /root/dbot/bot.py
 Restart=always
 RestartSec=5
 
@@ -125,10 +146,10 @@ WantedBy=multi-user.target
 
 Enable and start:
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable dbot
-sudo systemctl start dbot
-sudo systemctl status dbot
+systemctl daemon-reload
+systemctl enable dbot
+systemctl start dbot
+systemctl status dbot
 ```
 
 View logs:
@@ -136,26 +157,29 @@ View logs:
 journalctl -u dbot -f
 ```
 
-## Do You Need Docker?
-No, not required.
+## Test Checklist (Discord)
+1. Bot appears online in your server.
+2. Startup message appears:
+   - `An Asetianist by nature is a Loner.`
+3. Run `!postnow` in target channel.
+4. Confirm embed shows utterance text and working `Open on X` link.
+5. Confirm `recent_posts.json` is created.
+6. Run `!postnow` multiple times and verify no repeats in the last 7 posts.
+7. Leave bot running and verify scheduled post at `03:33` `Europe/Lisbon`.
 
-For this bot, `systemd + venv` is usually simplest and stable enough.
-Use Docker only if you already standardize deployments with containers.
+## Update Workflow
+When you push new code:
 
-## Optional Docker (if you want)
-Minimal `Dockerfile`:
-
-```Dockerfile
-FROM python:3.12-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
-CMD ["python", "bot.py"]
-```
-
-Run:
 ```bash
-docker build -t dbot .
-docker run -d --name dbot --restart unless-stopped --env-file .env dbot
+cd /root/dbot
+git pull
+source .venv/bin/activate
+pip install -r requirements.txt
+systemctl restart dbot
+journalctl -u dbot -n 50 --no-pager
 ```
+
+## Docker?
+Not needed for this project.
+
+Use Docker only if you already standardize all deployments with containers.
