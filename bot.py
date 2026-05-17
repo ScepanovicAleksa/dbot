@@ -17,7 +17,7 @@ UTTERANCES_CSV_PATH = BASE_DIR / "utterances.csv"
 RECENT_POSTS_PATH = BASE_DIR / "recent_posts.json"
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-DISCORD_GUILD_NAME = os.getenv("DISCORD_GUILD_NAME", "asetianism")
+DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID")
 DISCORD_CHANNEL_NAME = os.getenv("DISCORD_CHANNEL_NAME", "asetianism")
 PORTUGAL_TZ = ZoneInfo("Europe/Lisbon")
 POST_TIME = time(hour=3, minute=33, tzinfo=PORTUGAL_TZ)
@@ -104,36 +104,82 @@ def pick_random_utterance(utterances_data: list[dict], recent_post_ids: list[str
 
 
 def get_target_channel() -> discord.TextChannel | None:
-    guild = discord.utils.get(bot.guilds, name=DISCORD_GUILD_NAME)
-    if guild is None:
-        print(f"Guild not found: {DISCORD_GUILD_NAME}")
+    if not DISCORD_GUILD_ID:
+        print("DISCORD_GUILD_ID is missing from .env file.")
         return None
 
-    # prvo pokusavamo da nadjemo primarni kanal iz .env fajla
+    guild = bot.get_guild(int(DISCORD_GUILD_ID))
+    if guild is None:
+        print(f"Guild with ID {DISCORD_GUILD_ID} not found.")
+        return None
+
     channel = discord.utils.get(guild.text_channels, name=DISCORD_CHANNEL_NAME)
     
-    # ako ga ne nadje, automatski trazi fallback kanal sa imenom 'public'
     if channel is None:
         print(f"Primary channel '{DISCORD_CHANNEL_NAME}' not found. Trying fallback channel 'public'...")
         channel = discord.utils.get(guild.text_channels, name="public")
 
     if channel is None:
-        print(f"Neither primary channel nor fallback channel 'public' was found.")
+        print("Neither primary channel nor fallback channel 'public' was found.")
         return None
 
     return channel
 
 
-def format_utterance_embed(selected: dict) -> discord.Embed:
+def format_utterance_embed(selected: dict, title: str = "Utterance of the Day") -> discord.Embed:
     tweet_url = f"https://x.com/{selected['username']}/status/{selected['id']}"
     embed = discord.Embed(
-        title="Utterance of the Day",
+        title=title,
         url=tweet_url,
         description=selected["text"],
         color=0x3498DB,
     )
     embed.set_thumbnail(url="https://www.asetka.org/gfx/WordsinSilence_large.jpg")
     return embed
+
+
+# klasa za interaktivne dugmice (paginaciju) unutar discorda
+class SearchPaginationView(discord.ui.View):
+    def __init__(self, results: list[dict], query: str):
+        super().__init__(timeout=60.0) # dugmici su aktivni 60 sekundi
+        self.results = results
+        self.query = query
+        self.current_index = 0
+
+    def update_buttons(self) -> None:
+        # gasimo dugme 'back' ako smo na prvoj stranici
+        self.children[0].disabled = self.current_index == 0
+        # gasimo dugme 'next' ako smo na poslednjoj stranici
+        self.children[1].disabled = self.current_index == len(self.results) - 1
+
+    def create_embed(self) -> discord.Embed:
+        item = self.results[self.current_index]
+        title_text = f"Search Result {self.current_index + 1} of {len(self.results)} for '{self.query}'"
+        return format_utterance_embed(item, title=title_text)
+
+    @discord.ui.button(label="◀ Back", style=discord.ButtonStyle.secondary, disabled=True)
+    async def back_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if self.current_index > 0:
+            self.current_index -= 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.create_embed(), view=self)
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.primary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if self.current_index < len(self.results) - 1:
+            self.current_index += 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.create_embed(), view=self)
+
+    async def on_timeout(self) -> None:
+        # kada istekne vrijeme, gasimo dugmice da niko ne moze da klikne
+        for child in self.children:
+            child.disabled = True
+        try:
+            if hasattr(self, "message"):
+                await self.message.edit(view=self)
+        except Exception:
+            pass
 
 
 utterances = load_utterances_from_csv(UTTERANCES_CSV_PATH)
@@ -178,14 +224,6 @@ async def before_send_daily_utterance() -> None:
     await bot.wait_until_ready()
 
 
-@bot.command(name="postnow")
-@commands.cooldown(1, 60, commands.BucketType.user)
-async def postnow(ctx: commands.Context) -> None:
-    success = await post_one_utterance(ctx.channel)
-    if not success:
-        await ctx.send("Could not publish an utterance. Check logs for details.")
-
-
 @bot.command(name="search")
 @commands.cooldown(1, 10, commands.BucketType.user)
 async def search(ctx: commands.Context, *, query: str = "") -> None:
@@ -204,30 +242,18 @@ async def search(ctx: commands.Context, *, query: str = "") -> None:
         await ctx.send(f"No results found for: `{query}`")
         return
 
+    # ako ima samo jedan rezultat, saljemo obican embed bez dugmica
     if len(results) == 1:
-        embed = format_utterance_embed(results[0])
-        await ctx.send(content="Found 1 exact match:", embed=embed)
+        embed = format_utterance_embed(results[0], title=f"Found 1 exact match for '{query}'")
+        await ctx.send(embed=embed)
         return
 
-    output = f"Found **{len(results)}** results for `{query}`:\n\n"
+    # ako ima vise rezultata, pokrecemo paginaciju sa dugmicima
+    view = SearchPaginationView(results, query)
+    view.update_buttons()
     
-    for index, item in enumerate(results, start=1):
-        tweet_url = f"https://x.com/{item['username']}/status/{item['id']}"
-        clean_text = item["text"].replace("\n", " ")
-        short_text = clean_text if len(clean_text) <= 80 else f"{clean_text[:80]}..."
-        
-        output += f"{index}. [{short_text}]({tweet_url})\n"
-
-    if len(output) > 4000:
-        output = output[:3900] + "\n...and more results. Try refining your search query."
-
-    embed = discord.Embed(
-        title="Search Results",
-        description=output,
-        color=0x3498DB
-    )
-    embed.set_thumbnail(url="https://www.asetka.org/gfx/WordsinSilence_large.jpg")
-    await ctx.send(embed=embed)
+    embed = view.create_embed()
+    view.message = await ctx.send(embed=embed, view=view)
 
 
 @bot.event
@@ -244,14 +270,14 @@ async def on_command_error(ctx: commands.Context, error: Exception) -> None:
 async def on_guild_join(guild: discord.Guild) -> None:
     print(f"Bot successfully added to server: {guild.name}")
     
-    # dinamicki trazimo preko nase funkcije koja ima implementiran fallback na 'public'
-    channel = discord.utils.get(guild.text_channels, name=DISCORD_CHANNEL_NAME)
-    if channel is None:
-        channel = discord.utils.get(guild.text_channels, name="public")
-        
-    if channel is not None:
-        await channel.send(STARTUP_MESSAGE)
-        print("Initial greeting message sent to the server.")
+    if DISCORD_GUILD_ID and guild.id == int(DISCORD_GUILD_ID):
+        channel = discord.utils.get(guild.text_channels, name=DISCORD_CHANNEL_NAME)
+        if channel is None:
+            channel = discord.utils.get(guild.text_channels, name="public")
+            
+        if channel is not None:
+            await channel.send(STARTUP_MESSAGE)
+            print("Initial greeting message sent to the server.")
 
 
 @bot.event
