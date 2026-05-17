@@ -171,14 +171,18 @@ async def before_send_daily_utterance() -> None:
     await bot.wait_until_ready()
 
 
+# limit: 1 koriscenje u 60 sekundi po korisniku (commands.BucketType.user)
 @bot.command(name="postnow")
+@commands.cooldown(1, 60, commands.BucketType.user)
 async def postnow(ctx: commands.Context) -> None:
     success = await post_one_utterance(ctx.channel)
     if not success:
         await ctx.send("Could not publish an utterance. Check logs for details.")
 
 
+# limit: 1 koriscenje u 10 sekundi po korisniku
 @bot.command(name="search")
+@commands.cooldown(1, 10, commands.BucketType.user)
 async def search(ctx: commands.Context, *, query: str = "") -> None:
     if not query.strip():
         await ctx.send("Please provide a search term. Example: `!search loner`")
@@ -195,26 +199,22 @@ async def search(ctx: commands.Context, *, query: str = "") -> None:
         await ctx.send(f"No results found for: `{query}`")
         return
 
-    # ako postoji tacno jedan rezultat, saljemo puni embed format
     if len(results) == 1:
         embed = format_utterance_embed(results[0])
         await ctx.send(content="Found 1 exact match:", embed=embed)
         return
 
-    # ako ima vise rezultata, pravimo finu, preglednu listu sa linkovima
     output = f"Found **{len(results)}** results for `{query}`:\n\n"
     
     for index, item in enumerate(results, start=1):
         tweet_url = f"https://x.com/{item['username']}/status/{item['id']}"
-        # skracujemo tekst na 80 karaktera u ispisu liste cisto zbog preglednosti
         clean_text = item["text"].replace("\n", " ")
         short_text = clean_text if len(clean_text) <= 80 else f"{clean_text[:80]}..."
         
         output += f"{index}. [{short_text}]({tweet_url})\n"
 
-    # ako je lista predugacka za obicnu tekstualnu poruku (discord limit je 4000)
     if len(output) > 4000:
-        output = output[:3900] + "\n...and more results. Try refining your search query."
+        output = output[:3900] + "\n...and more results. Try refining your search."
 
     embed = discord.Embed(
         title="Search Results",
@@ -223,6 +223,19 @@ async def search(ctx: commands.Context, *, query: str = "") -> None:
     )
     embed.set_thumbnail(url="https://www.asetka.org/gfx/WordsinSilence_large.jpg")
     await ctx.send(embed=embed)
+
+
+# hvatanje gresaka kada neko pokusa da spamuje i probije limit (cooldown)
+@bot.event
+async def on_command_error(ctx: commands.Context, error: Exception) -> None:
+    if isinstance(error, commands.CommandOnCooldown):
+        # pretvaramo preostalo vrijeme u cio broj sekundi i saljemo upozorenje
+        seconds = round(error.retry_after)
+        await ctx.send(f"Hold on. You are using this command too fast. Try again in {seconds}s.", delete_after=5)
+        return
+    
+    # ako se desi neka druga greska, samo je ispisujemo u konzolu na serveru
+    print(f"An error occurred: {error}")
 
 
 @bot.event
