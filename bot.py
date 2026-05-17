@@ -15,7 +15,6 @@ load_dotenv(BASE_DIR / ".env")
 
 UTTERANCES_CSV_PATH = BASE_DIR / "utterances.csv"
 RECENT_POSTS_PATH = BASE_DIR / "recent_posts.json"
-MESSAGE_COUNTS_PATH = BASE_DIR / "message_counts.json"
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DISCORD_GUILD_NAME = os.getenv("DISCORD_GUILD_NAME", "asetianism")
@@ -24,8 +23,6 @@ PORTUGAL_TZ = ZoneInfo("Europe/Lisbon")
 POST_TIME = time(hour=3, minute=33, tzinfo=PORTUGAL_TZ)
 STARTUP_MESSAGE = "An Asetianist by nature is a Loner."
 RECENT_HISTORY_LIMIT = 7
-
-startup_message_sent = False
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -97,7 +94,6 @@ def pick_random_utterance(utterances_data: list[dict], recent_post_ids: list[str
     candidates = [item for item in utterances_data if item["id"] not in recent_post_ids]
 
     if not candidates:
-        # Fallback for small datasets: at least avoid posting the same item two days in a row.
         last_post_id = recent_post_ids[-1] if recent_post_ids else None
         candidates = [item for item in utterances_data if item["id"] != last_post_id]
 
@@ -119,6 +115,19 @@ def get_target_channel() -> discord.TextChannel | None:
         return None
 
     return channel
+
+
+def format_utterance_embed(selected: dict) -> discord.Embed:
+    tweet_url = f"https://x.com/{selected['username']}/status/{selected['id']}"
+    embed = discord.Embed(
+        title="Utterance of the Day",
+        url=tweet_url,
+        description=selected["text"],
+        color=0x3498DB,
+    )
+    embed.add_field(name="Source", value=f"[Open on X]({tweet_url})", inline=False)
+    embed.set_thumbnail(url="https://www.asetka.org/gfx/WordsinSilence_large.jpg")
+    return embed
 
 
 utterances = load_utterances_from_csv(UTTERANCES_CSV_PATH)
@@ -148,17 +157,7 @@ async def post_one_utterance(channel: discord.TextChannel) -> bool:
         print("No utterance available for posting.")
         return False
 
-    tweet_url = f"https://x.com/{selected['username']}/status/{selected['id']}"
-
-    embed = discord.Embed(
-        title="Axiom of the Day",
-        url=tweet_url,
-        description=selected["text"],
-        color=0x3498DB,
-    )
-    embed.add_field(name="Source", value=f"[Open on X]({tweet_url})", inline=False)
-    embed.set_thumbnail(url="https://www.asetka.org/gfx/WordsinSilence_large.jpg")
-
+    embed = format_utterance_embed(selected)
     await channel.send(embed=embed)
     print(f"Posted utterance ID {selected['id']} at {POST_TIME.strftime('%H:%M %Z')}.")
 
@@ -173,26 +172,6 @@ async def before_send_daily_utterance() -> None:
     await bot.wait_until_ready()
 
 
-try:
-    with MESSAGE_COUNTS_PATH.open("r", encoding="utf-8") as file:
-        message_counts = json.load(file)
-except (FileNotFoundError, json.JSONDecodeError):
-    message_counts = {}
-
-
-@bot.command(name="ranking")
-async def ranking(ctx: commands.Context) -> None:
-    sorted_counts = sorted(message_counts.items(), key=lambda item: item[1], reverse=True)
-    output = "Top Contributors\n\n"
-
-    for index, (user_id, count) in enumerate(sorted_counts[:10], start=1):
-        user = await bot.fetch_user(int(user_id))
-        output += f"{index}. **{user.name}** - {count} messages\n"
-
-    embed = discord.Embed(description=output, color=0x00FF00)
-    await ctx.send(embed=embed)
-
-
 @bot.command(name="postnow")
 async def postnow(ctx: commands.Context) -> None:
     success = await post_one_utterance(ctx.channel)
@@ -200,21 +179,44 @@ async def postnow(ctx: commands.Context) -> None:
         await ctx.send("Could not publish an utterance. Check logs for details.")
 
 
+@bot.command(name="search")
+async def search(ctx: commands.Context, *, query: str = "") -> None:
+    if not query.strip():
+        await ctx.send("Please provide a search term. Example: `!search loner`")
+        return
+
+    if not utterances:
+        await ctx.send("The database is empty or the CSV file could not be loaded.")
+        return
+
+    search_query = query.lower().strip()
+    results = [item for item in utterances if search_query in item["text"].lower()]
+
+    if not results:
+        await ctx.send(f"No results found for: `{query}`")
+        return
+
+    selected = random.choice(results)
+    embed = format_utterance_embed(selected)
+    
+    await ctx.send(content=f"Found {len(results)} result(s). Here is one of them:", embed=embed)
+
+
+@bot.event
+async def on_guild_join(guild: discord.Guild) -> None:
+    print(f"Bot successfully added to server: {guild.name}")
+    channel = discord.utils.get(guild.text_channels, name=DISCORD_CHANNEL_NAME)
+    if channel is not None:
+        await channel.send(STARTUP_MESSAGE)
+        print("Initial greeting message sent to the server.")
+
+
 @bot.event
 async def on_ready() -> None:
-    global startup_message_sent
-
     print(f"Bot is online as {bot.user}.")
 
     if not send_daily_utterance.is_running():
         send_daily_utterance.start()
-
-    if not startup_message_sent:
-        channel = get_target_channel()
-        if channel is not None:
-            await channel.send(STARTUP_MESSAGE)
-            startup_message_sent = True
-            print("Startup message sent.")
 
 
 if not DISCORD_TOKEN:
