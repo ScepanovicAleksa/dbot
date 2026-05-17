@@ -17,7 +17,8 @@ UTTERANCES_CSV_PATH = BASE_DIR / "utterances.csv"
 RECENT_POSTS_PATH = BASE_DIR / "recent_posts.json"
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID")
+# uskladjeno sa tvojim .env fajlom
+DISCORD_GUILD_ID = os.getenv("GUILD_ID")
 DISCORD_CHANNEL_NAME = os.getenv("DISCORD_CHANNEL_NAME", "asetianism")
 PORTUGAL_TZ = ZoneInfo("Europe/Lisbon")
 POST_TIME = time(hour=3, minute=33, tzinfo=PORTUGAL_TZ)
@@ -105,7 +106,7 @@ def pick_random_utterance(utterances_data: list[dict], recent_post_ids: list[str
 
 def get_target_channel() -> discord.TextChannel | None:
     if not DISCORD_GUILD_ID:
-        print("DISCORD_GUILD_ID is missing from .env file.")
+        print("GUILD_ID is missing from .env file.")
         return None
 
     guild = bot.get_guild(int(DISCORD_GUILD_ID))
@@ -126,7 +127,7 @@ def get_target_channel() -> discord.TextChannel | None:
     return channel
 
 
-def format_utterance_embed(selected: dict, title: str = "Daily Heka") -> discord.Embed:
+def format_utterance_embed(selected: dict, title: str = "Utterance of the Day") -> discord.Embed:
     tweet_url = f"https://x.com/{selected['username']}/status/{selected['id']}"
     embed = discord.Embed(
         title=title,
@@ -138,18 +139,15 @@ def format_utterance_embed(selected: dict, title: str = "Daily Heka") -> discord
     return embed
 
 
-# klasa za interaktivne dugmice (paginaciju) unutar discorda
 class SearchPaginationView(discord.ui.View):
     def __init__(self, results: list[dict], query: str):
-        super().__init__(timeout=60.0) # dugmici su aktivni 60 sekundi
+        super().__init__(timeout=60.0)
         self.results = results
         self.query = query
         self.current_index = 0
 
     def update_buttons(self) -> None:
-        # gasimo dugme 'back' ako smo na prvoj stranici
         self.children[0].disabled = self.current_index == 0
-        # gasimo dugme 'next' ako smo na poslednjoj stranici
         self.children[1].disabled = self.current_index == len(self.results) - 1
 
     def create_embed(self) -> discord.Embed:
@@ -172,7 +170,6 @@ class SearchPaginationView(discord.ui.View):
             await interaction.response.edit_message(embed=self.create_embed(), view=self)
 
     async def on_timeout(self) -> None:
-        # kada istekne vrijeme, gasimo dugmice da niko ne moze da klikne
         for child in self.children:
             child.disabled = True
         try:
@@ -242,13 +239,11 @@ async def search(ctx: commands.Context, *, query: str = "") -> None:
         await ctx.send(f"No results found for: `{query}`")
         return
 
-    # ako ima samo jedan rezultat, saljemo obican embed bez dugmica
     if len(results) == 1:
         embed = format_utterance_embed(results[0], title=f"Found 1 exact match for '{query}'")
         await ctx.send(embed=embed)
         return
 
-    # ako ima vise rezultata, pokrecemo paginaciju sa dugmicima
     view = SearchPaginationView(results, query)
     view.update_buttons()
     
@@ -283,6 +278,15 @@ async def on_guild_join(guild: discord.Guild) -> None:
 @bot.event
 async def on_ready() -> None:
     print(f"Bot is online as {bot.user}.")
+
+    # okidanje slanja poruke odmah pri restartu/paljenju bota
+    channel = get_target_channel()
+    if channel is not None:
+        try:
+            await channel.send(STARTUP_MESSAGE)
+            print("Startup message successfully sent via on_ready trigger.")
+        except Exception as e:
+            print(f"Could not send startup message via on_ready: {e}")
 
     if not send_daily_utterance.is_running():
         send_daily_utterance.start()
