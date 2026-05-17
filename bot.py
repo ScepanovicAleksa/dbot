@@ -109,9 +109,16 @@ def get_target_channel() -> discord.TextChannel | None:
         print(f"Guild not found: {DISCORD_GUILD_NAME}")
         return None
 
+    # prvo pokusavamo da nadjemo primarni kanal iz .env fajla
     channel = discord.utils.get(guild.text_channels, name=DISCORD_CHANNEL_NAME)
+    
+    # ako ga ne nadje, automatski trazi fallback kanal sa imenom 'public'
     if channel is None:
-        print(f"Channel not found: {DISCORD_CHANNEL_NAME}")
+        print(f"Primary channel '{DISCORD_CHANNEL_NAME}' not found. Trying fallback channel 'public'...")
+        channel = discord.utils.get(guild.text_channels, name="public")
+
+    if channel is None:
+        print(f"Neither primary channel nor fallback channel 'public' was found.")
         return None
 
     return channel
@@ -171,7 +178,6 @@ async def before_send_daily_utterance() -> None:
     await bot.wait_until_ready()
 
 
-# limit: 1 koriscenje u 60 sekundi po korisniku (commands.BucketType.user)
 @bot.command(name="postnow")
 @commands.cooldown(1, 60, commands.BucketType.user)
 async def postnow(ctx: commands.Context) -> None:
@@ -180,7 +186,6 @@ async def postnow(ctx: commands.Context) -> None:
         await ctx.send("Could not publish an utterance. Check logs for details.")
 
 
-# limit: 1 koriscenje u 10 sekundi po korisniku
 @bot.command(name="search")
 @commands.cooldown(1, 10, commands.BucketType.user)
 async def search(ctx: commands.Context, *, query: str = "") -> None:
@@ -214,7 +219,7 @@ async def search(ctx: commands.Context, *, query: str = "") -> None:
         output += f"{index}. [{short_text}]({tweet_url})\n"
 
     if len(output) > 4000:
-        output = output[:3900] + "\n...and more results. Try refining your search."
+        output = output[:3900] + "\n...and more results. Try refining your search query."
 
     embed = discord.Embed(
         title="Search Results",
@@ -225,23 +230,25 @@ async def search(ctx: commands.Context, *, query: str = "") -> None:
     await ctx.send(embed=embed)
 
 
-# hvatanje gresaka kada neko pokusa da spamuje i probije limit (cooldown)
 @bot.event
 async def on_command_error(ctx: commands.Context, error: Exception) -> None:
     if isinstance(error, commands.CommandOnCooldown):
-        # pretvaramo preostalo vrijeme u cio broj sekundi i saljemo upozorenje
         seconds = round(error.retry_after)
         await ctx.send(f"Hold on. You are using this command too fast. Try again in {seconds}s.", delete_after=5)
         return
     
-    # ako se desi neka druga greska, samo je ispisujemo u konzolu na serveru
     print(f"An error occurred: {error}")
 
 
 @bot.event
 async def on_guild_join(guild: discord.Guild) -> None:
     print(f"Bot successfully added to server: {guild.name}")
+    
+    # dinamicki trazimo preko nase funkcije koja ima implementiran fallback na 'public'
     channel = discord.utils.get(guild.text_channels, name=DISCORD_CHANNEL_NAME)
+    if channel is None:
+        channel = discord.utils.get(guild.text_channels, name="public")
+        
     if channel is not None:
         await channel.send(STARTUP_MESSAGE)
         print("Initial greeting message sent to the server.")
