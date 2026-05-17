@@ -126,7 +126,7 @@ def get_target_channel() -> discord.TextChannel | None:
     return channel
 
 
-def format_utterance_embed(selected: dict, title: str = "Utterance of the Day") -> discord.Embed:
+def format_utterance_embed(selected: dict, title: str = "Daily Heka") -> discord.Embed:
     tweet_url = f"https://x.com/{selected['username']}/status/{selected['id']}"
     embed = discord.Embed(
         title=title,
