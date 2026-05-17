@@ -125,7 +125,6 @@ def format_utterance_embed(selected: dict) -> discord.Embed:
         description=selected["text"],
         color=0x3498DB,
     )
-    embed.add_field(name="Source", value=f"[Open on X]({tweet_url})", inline=False)
     embed.set_thumbnail(url="https://www.asetka.org/gfx/WordsinSilence_large.jpg")
     return embed
 
@@ -196,10 +195,34 @@ async def search(ctx: commands.Context, *, query: str = "") -> None:
         await ctx.send(f"No results found for: `{query}`")
         return
 
-    selected = random.choice(results)
-    embed = format_utterance_embed(selected)
+    # ako postoji tacno jedan rezultat, saljemo puni embed format
+    if len(results) == 1:
+        embed = format_utterance_embed(results[0])
+        await ctx.send(content="Found 1 exact match:", embed=embed)
+        return
+
+    # ako ima vise rezultata, pravimo finu, preglednu listu sa linkovima
+    output = f"Found **{len(results)}** results for `{query}`:\n\n"
     
-    await ctx.send(content=f"Found {len(results)} result(s). Here is one of them:", embed=embed)
+    for index, item in enumerate(results, start=1):
+        tweet_url = f"https://x.com/{item['username']}/status/{item['id']}"
+        # skracujemo tekst na 80 karaktera u ispisu liste cisto zbog preglednosti
+        clean_text = item["text"].replace("\n", " ")
+        short_text = clean_text if len(clean_text) <= 80 else f"{clean_text[:80]}..."
+        
+        output += f"{index}. [{short_text}]({tweet_url})\n"
+
+    # ako je lista predugacka za obicnu tekstualnu poruku (discord limit je 4000)
+    if len(output) > 4000:
+        output = output[:3900] + "\n...and more results. Try refining your search query."
+
+    embed = discord.Embed(
+        title="Search Results",
+        description=output,
+        color=0x3498DB
+    )
+    embed.set_thumbnail(url="https://www.asetka.org/gfx/WordsinSilence_large.jpg")
+    await ctx.send(embed=embed)
 
 
 @bot.event
